@@ -1,8 +1,8 @@
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-const { parseString } = require('xml2js');
-const path = require('path');
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
+import { parseString } from 'xml2js';
+import path from 'path';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -153,6 +153,164 @@ function extractText(field) {
   return String(field);
 }
 
+// Discord通知API
+app.post('/api/notifications/discord/test', async (req, res) => {
+  try {
+    const { botToken, channelId } = req.body;
+    
+    if (!botToken || !channelId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Bot Token和Channel ID不能为空' 
+      });
+    }
+
+    const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+    
+    const response = await axios.post(url, {
+      content: '🧪 RSS监控工具测试消息',
+    }, {
+      headers: {
+        'Authorization': `Bot ${botToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    res.json({ success: true, message: 'Discord测试消息发送成功' });
+    
+  } catch (error) {
+    console.error('Discord test error:', error.response?.data || error.message);
+    
+    let errorMessage = 'Discord连接失败';
+    
+    if (error.response?.status === 401) {
+      errorMessage = 'Bot Token无效，请检查是否正确';
+    } else if (error.response?.status === 403) {
+      errorMessage = 'Bot没有发送消息的权限，请检查Bot权限设置';
+    } else if (error.response?.status === 404) {
+      errorMessage = 'Channel ID不存在或Bot无法访问该频道';
+    } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      errorMessage = '无法连接到Discord API，请检查网络连接';
+    }
+    
+    res.json({ 
+      success: false, 
+      error: errorMessage,
+      details: error.response?.data?.message || error.message
+    });
+  }
+});
+
+// Telegram通知API
+app.post('/api/notifications/telegram/test', async (req, res) => {
+  try {
+    const { botToken, chatId } = req.body;
+    
+    if (!botToken || !chatId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Bot Token和Chat ID不能为空' 
+      });
+    }
+
+    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+    
+    await axios.post(url, {
+      chat_id: chatId,
+      text: '🧪 RSS监控工具测试消息',
+      parse_mode: 'HTML',
+    });
+
+    res.json({ success: true, message: 'Telegram测试消息发送成功' });
+    
+  } catch (error) {
+    console.error('Telegram test error:', error.response?.data || error.message);
+    
+    let errorMessage = 'Telegram连接失败';
+    
+    if (error.response?.status === 401) {
+      errorMessage = 'Bot Token无效，请检查是否正确';
+    } else if (error.response?.status === 400) {
+      errorMessage = 'Chat ID无效或Bot无法访问该聊天';
+    } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      errorMessage = '无法连接到Telegram API，请检查网络连接';
+    }
+    
+    res.json({ 
+      success: false, 
+      error: errorMessage,
+      details: error.response?.data?.description || error.message
+    });
+  }
+});
+
+// Telegram发送通知API
+app.post('/api/notifications/telegram/send', async (req, res) => {
+  try {
+    const { botToken, chatId, message } = req.body;
+    
+    if (!botToken || !chatId || !message) {
+      return res.status(400).json({ 
+        success: false, 
+        error: '参数不完整' 
+      });
+    }
+
+    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+    
+    await axios.post(url, {
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'HTML',
+    });
+
+    res.json({ success: true });
+    
+  } catch (error) {
+    console.error('Telegram send error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: error.response?.data?.description || error.message
+    });
+  }
+});
+
+// Discord发送通知API
+app.post('/api/notifications/discord/send', async (req, res) => {
+  try {
+    const { botToken, channelId, message } = req.body;
+    
+    if (!botToken || !channelId || !message) {
+      return res.status(400).json({ 
+        success: false, 
+        error: '参数不完整' 
+      });
+    }
+
+    const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+    
+    await axios.post(url, {
+      content: message,
+    }, {
+      headers: {
+        'Authorization': `Bot ${botToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    res.json({ success: true });
+    
+  } catch (error) {
+    console.error('Discord send error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
 // 健康检查
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -170,4 +328,4 @@ app.listen(PORT, () => {
   console.log(`🔗 API地址: http://localhost:${PORT}/api`);
 });
 
-module.exports = app;
+export default app;

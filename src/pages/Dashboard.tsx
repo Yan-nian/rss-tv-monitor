@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, RefreshCw, AlertCircle, CheckCircle, Clock, TrendingUp } from 'lucide-react';
+import { Plus, RefreshCw, AlertCircle, CheckCircle, Clock, TrendingUp, X, Bug, Rss, XCircle } from 'lucide-react';
 import useStore from '../store';
 import { rssService } from '../services/rssService';
 import { notificationService } from '../services/notificationService';
@@ -21,12 +21,21 @@ const Dashboard: React.FC = () => {
   const [newSourceName, setNewSourceName] = useState('');
   const [newSourceUrl, setNewSourceUrl] = useState('');
   const [isRefreshing, setIsRefreshing] = useState<string | null>(null);
+  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   
   const stats = getStats();
   
   useEffect(() => {
     // 初始化自动刷新管理器
     autoRefreshManager.initialize();
+    
+    // 延迟检查定时器状态
+    const checkTimer = setTimeout(() => {
+      const status = autoRefreshManager.getTimerStatus();
+      console.log('Dashboard初始化后定时器状态:', status);
+    }, 2000);
+    
+    return () => clearTimeout(checkTimer);
   }, []);
   
   const handleAddSource = async () => {
@@ -76,16 +85,62 @@ const Dashboard: React.FC = () => {
     setIsRefreshing(sourceId);
     
     try {
-      await autoRefreshManager.manualRefreshSource(sourceId);
+      // 添加超时保护
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('刷新超时')), 60000); // 60秒超时
+      });
+      
+      const refreshPromise = autoRefreshManager.manualRefreshSource(sourceId);
+      const success = await Promise.race([refreshPromise, timeoutPromise]);
+      
+      if (!success) {
+        console.warn(`RSS源 ${sourceId} 刷新失败`);
+        toast.error('RSS源刷新失败');
+      }
+    } catch (error) {
+      console.error('刷新RSS源时发生异常:', error);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      toast.error(`刷新失败: ${errorMessage}`);
     } finally {
+      // 确保状态一定会被清除
       setIsRefreshing(null);
     }
   };
   
   const refreshAllSources = async () => {
-    await autoRefreshManager.manualRefreshAllSources();
+    setIsRefreshingAll(true);
+    try {
+      // 添加超时保护
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('批量刷新超时')), 120000); // 120秒超时
+      });
+      
+      const refreshPromise = autoRefreshManager.manualRefreshAllSources();
+      await Promise.race([refreshPromise, timeoutPromise]);
+    } catch (error) {
+      console.error('刷新所有RSS源失败:', error);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      toast.error(`批量刷新失败: ${errorMessage}`);
+    } finally {
+      // 确保状态一定会被清除
+      setIsRefreshingAll(false);
+    }
   };
-  
+
+  const debugRefreshStatus = () => {
+    const status = autoRefreshManager.getTimerStatus();
+    console.log('当前刷新状态:', status);
+    console.log('前端刷新状态:', { isRefreshing, isRefreshingAll });
+    toast.info(`定时器状态: ${status.activeTimers}/${status.totalSources} 个活跃`);
+  };
+
+  const forceStopRefresh = () => {
+    setIsRefreshing(null);
+    setIsRefreshingAll(false);
+    toast.success('已强制停止所有刷新操作');
+    console.log('强制停止刷新状态');
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'active':
@@ -202,11 +257,28 @@ const Dashboard: React.FC = () => {
             </h3>
             <div className="flex space-x-2">
               <button
-                onClick={refreshAllSources}
-                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                onClick={debugRefreshStatus}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-600 bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
               >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                全部刷新
+                <Clock className="w-4 h-4 mr-2" />
+                调试状态
+              </button>
+              {(isRefreshingAll || isRefreshing) && (
+                <button
+                  onClick={forceStopRefresh}
+                  className="inline-flex items-center px-3 py-2 border border-red-300 shadow-sm text-sm leading-4 font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                >
+                  <AlertCircle className="w-4 h-4 mr-2" />
+                  强制停止
+                </button>
+              )}
+              <button
+                onClick={refreshAllSources}
+                disabled={isRefreshingAll}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshingAll ? 'animate-spin' : ''}`} />
+                {isRefreshingAll ? '刷新中...' : '全部刷新'}
               </button>
               <button
                 onClick={() => setIsAddingSource(true)}

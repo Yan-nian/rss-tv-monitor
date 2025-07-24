@@ -11,6 +11,14 @@ export default defineConfig({
   define: {
     global: 'globalThis',
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     rollupOptions: {
       output: {

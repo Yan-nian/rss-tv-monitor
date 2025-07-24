@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BarChart3, Settings, Bell, Home } from 'lucide-react';
+import { BarChart3, Settings, Bell, Home, FileText } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const Layout: React.FC = () => {
@@ -24,6 +24,12 @@ const Layout: React.FC = () => {
       href: '/notifications',
       icon: Bell,
       current: location.pathname === '/notifications',
+    },
+    {
+      name: '运行日志',
+      href: '/logs',
+      icon: FileText,
+      current: location.pathname === '/logs',
     },
     {
       name: '系统配置',

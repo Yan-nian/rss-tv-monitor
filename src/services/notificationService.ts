@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { NotificationConfig, TVShow } from '../store';
+import { logService } from './logService';
 
 class NotificationService {
   async sendTelegramNotification(
@@ -7,20 +8,43 @@ class NotificationService {
     message: string
   ): Promise<boolean> {
     if (!config.enabled || !config.botToken || !config.chatId) {
+      logService.log('info', 'notification', 'Telegram通知跳过：配置不完整');
       return false;
     }
     
     try {
-      const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-      await axios.post(url, {
-        chat_id: config.chatId,
-        text: message,
-        parse_mode: 'HTML',
+      logService.log('info', 'notification', `发送Telegram通知到聊天: ${config.chatId}`);
+      
+      const response = await axios.post('/api/notifications/telegram/send', {
+        botToken: config.botToken,
+        chatId: config.chatId,
+        message: message,
       });
-      return true;
-    } catch (error) {
-      console.error('Telegram notification failed:', error);
-      return false;
+      
+      if (response.data.success) {
+        logService.log('success', 'notification', 'Telegram通知发送成功', {
+          chatId: config.chatId,
+          messageLength: message.length
+        });
+        return true;
+      } else {
+        const error = response.data.error || 'Telegram发送失败';
+        logService.log('error', 'notification', `Telegram通知发送失败: ${error}`, {
+          chatId: config.chatId,
+          error
+        });
+        throw new Error(error);
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || error.message || 'Telegram API调用失败';
+      logService.log('error', 'notification', `Telegram通知异常: ${errorMessage}`, {
+        chatId: config.chatId,
+        error: errorMessage,
+        status: error.response?.status
+      });
+      
+      // 抛出错误以便上层处理
+      throw new Error(errorMessage);
     }
   }
   
@@ -28,20 +52,44 @@ class NotificationService {
     config: NotificationConfig['discord'],
     message: string
   ): Promise<boolean> {
-    if (!config.enabled || !config.webhookUrl) {
+    if (!config.enabled || !config.botToken || !config.channelId) {
+      logService.log('info', 'notification', 'Discord通知跳过：配置不完整');
       return false;
     }
     
     try {
-      await axios.post(config.webhookUrl, {
-        content: message,
-        username: 'RSS Monitor',
-        avatar_url: 'https://cdn-icons-png.flaticon.com/512/733/733585.png',
+      logService.log('info', 'notification', `发送Discord通知到频道: ${config.channelId}`);
+      
+      const response = await axios.post('/api/notifications/discord/send', {
+        botToken: config.botToken,
+        channelId: config.channelId,
+        message: message,
       });
-      return true;
-    } catch (error) {
-      console.error('Discord notification failed:', error);
-      return false;
+      
+      if (response.data.success) {
+        logService.log('success', 'notification', 'Discord通知发送成功', {
+          channelId: config.channelId,
+          messageLength: message.length
+        });
+        return true;
+      } else {
+        const error = response.data.error || 'Discord发送失败';
+        logService.log('error', 'notification', `Discord通知发送失败: ${error}`, {
+          channelId: config.channelId,
+          error
+        });
+        throw new Error(error);
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || error.message || 'Discord API调用失败';
+      logService.log('error', 'notification', `Discord通知异常: ${errorMessage}`, {
+        channelId: config.channelId,
+        error: errorMessage,
+        status: error.response?.status
+      });
+      
+      // 抛出错误以便上层处理
+      throw new Error(errorMessage);
     }
   }
   
@@ -51,6 +99,13 @@ class NotificationService {
   ): Promise<void> {
     if (shows.length === 0) return;
     
+    logService.log('info', 'notification', `准备发送新剧集通知，共 ${shows.length} 部剧集`, {
+      showCount: shows.length,
+      showTitles: shows.map(s => s.title),
+      telegramEnabled: notificationConfig.telegram.enabled,
+      discordEnabled: notificationConfig.discord.enabled
+    });
+    
     const messages = shows.map(show => 
       this.formatMessage(notificationConfig.messageTemplate, show)
     );
@@ -59,18 +114,42 @@ class NotificationService {
     
     // 发送Telegram通知
     if (notificationConfig.telegram.enabled) {
-      await this.sendTelegramNotification(
-        notificationConfig.telegram,
-        combinedMessage
-      );
+      try {
+        await this.sendTelegramNotification(
+          notificationConfig.telegram,
+          combinedMessage
+        );
+        logService.log('success', 'notification', 'Telegram新剧集通知发送成功', {
+          showCount: shows.length,
+          messageLength: combinedMessage.length
+        });
+      } catch (error) {
+        logService.log('error', 'notification', 'Telegram新剧集通知发送失败', {
+          showCount: shows.length,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        // 不阻断其他通知的发送
+      }
     }
     
     // 发送Discord通知
     if (notificationConfig.discord.enabled) {
-      await this.sendDiscordNotification(
-        notificationConfig.discord,
-        combinedMessage
-      );
+      try {
+        await this.sendDiscordNotification(
+          notificationConfig.discord,
+          combinedMessage
+        );
+        logService.log('success', 'notification', 'Discord新剧集通知发送成功', {
+          showCount: shows.length,
+          messageLength: combinedMessage.length
+        });
+      } catch (error) {
+        logService.log('error', 'notification', 'Discord新剧集通知发送失败', {
+          showCount: shows.length,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        // 不阻断其他通知的发送
+      }
     }
   }
   
@@ -90,15 +169,41 @@ class NotificationService {
     config: NotificationConfig['telegram']
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      const success = await this.sendTelegramNotification(
-        config,
-        '🧪 RSS监控工具测试消息'
-      );
-      return { success };
-    } catch (error) {
+      logService.log('info', 'notification', '测试Telegram连接...', {
+        chatId: config.chatId
+      });
+      
+      const response = await axios.post('/api/notifications/telegram/test', {
+        botToken: config.botToken,
+        chatId: config.chatId,
+      });
+      
+      if (response.data.success) {
+        logService.log('success', 'notification', 'Telegram连接测试成功', {
+          chatId: config.chatId
+        });
+        return { success: true };
+      } else {
+        const error = response.data.error || '测试失败';
+        logService.log('error', 'notification', `Telegram连接测试失败: ${error}`, {
+          chatId: config.chatId,
+          error
+        });
+        return {
+          success: false,
+          error,
+        };
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || error.message || '连接测试失败';
+      logService.log('error', 'notification', `Telegram连接测试异常: ${errorMessage}`, {
+        chatId: config.chatId,
+        error: errorMessage,
+        status: error.response?.status
+      });
       return {
         success: false,
-        error: error instanceof Error ? error.message : '未知错误',
+        error: errorMessage,
       };
     }
   }
@@ -107,15 +212,41 @@ class NotificationService {
     config: NotificationConfig['discord']
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      const success = await this.sendDiscordNotification(
-        config,
-        '🧪 RSS监控工具测试消息'
-      );
-      return { success };
-    } catch (error) {
+      logService.log('info', 'notification', '测试Discord连接...', {
+        channelId: config.channelId
+      });
+      
+      const response = await axios.post('/api/notifications/discord/test', {
+        botToken: config.botToken,
+        channelId: config.channelId,
+      });
+      
+      if (response.data.success) {
+        logService.log('success', 'notification', 'Discord连接测试成功', {
+          channelId: config.channelId
+        });
+        return { success: true };
+      } else {
+        const error = response.data.error || '测试失败';
+        logService.log('error', 'notification', `Discord连接测试失败: ${error}`, {
+          channelId: config.channelId,
+          error
+        });
+        return {
+          success: false,
+          error,
+        };
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || error.message || '连接测试失败';
+      logService.log('error', 'notification', `Discord连接测试异常: ${errorMessage}`, {
+        channelId: config.channelId,
+        error: errorMessage,
+        status: error.response?.status
+      });
       return {
         success: false,
-        error: error instanceof Error ? error.message : '未知错误',
+        error: errorMessage,
       };
     }
   }
@@ -141,10 +272,16 @@ class NotificationService {
   validateDiscordConfig(config: NotificationConfig['discord']): string[] {
     const errors: string[] = [];
     
-    if (!config.webhookUrl) {
-      errors.push('Webhook URL不能为空');
-    } else if (!config.webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
-      errors.push('Webhook URL格式不正确');
+    if (!config.botToken) {
+      errors.push('Bot Token不能为空');
+    } else if (config.botToken.length < 50) {
+      errors.push('Bot Token长度不正确，请检查是否完整');
+    }
+    
+    if (!config.channelId) {
+      errors.push('Channel ID不能为空');
+    } else if (!config.channelId.match(/^\d{17,20}$/)) {
+      errors.push('Channel ID格式不正确，应为17-20位数字');
     }
     
     return errors;

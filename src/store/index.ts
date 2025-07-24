@@ -41,7 +41,8 @@ export interface NotificationConfig {
   };
   discord: {
     enabled: boolean;
-    webhookUrl: string;
+    botToken: string;
+    channelId: string;
   };
   messageTemplate: string;
 }
@@ -107,7 +108,8 @@ const useStore = create<AppState>()(persist(
       },
       discord: {
         enabled: false,
-        webhookUrl: '',
+        botToken: '',
+        channelId: '',
       },
       messageTemplate: '🎬 发现新剧集: {{title}}\n中文名: {{chineseTitle}}\n分类: {{category}}\n链接: {{link}}\n种子链接: {{torrentLink}}\n发布时间: {{pubDate}}',
     },
@@ -149,13 +151,13 @@ const useStore = create<AppState>()(persist(
         );
         
         if (existingShowIndex !== -1) {
-          // 如果剧名已存在，更新现有记录
+          // 如果剧名已存在，更新现有记录（只进行次数统计，不标记为新）
           const existingShow = state.tvShows[existingShowIndex];
           const updatedShow = {
             ...existingShow,
             count: existingShow.count + 1,
             lastSeen: new Date().toISOString(),
-            isNew: true, // 重新标记为新
+            // 对于已统计过的剧名，不重新标记为新，保持原有状态
             // 合并RSS源，避免重复
             sources: [...new Set([...existingShow.sources, ...show.sources])],
             // 更新其他字段（如果新数据有值）

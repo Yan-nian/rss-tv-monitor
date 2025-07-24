@@ -3,6 +3,7 @@ import { parseString } from 'xml2js';
 import { TVShow } from '../store';
 import { tmdbService } from './tmdbService';
 import useStore from '../store';
+import { logService } from './logService';
 
 // 生成唯一ID的辅助函数
 let idCounter = 0;
@@ -53,7 +54,7 @@ class RSSService {
   
   async fetchRSSFeed(url: string): Promise<RSSFeed> {
     try {
-      console.log(`通过后端API获取RSS: ${url}`);
+      logService.log('info', 'rss', `开始获取RSS源: ${url}`);
       
       const response = await axios.post(`${this.apiBaseUrl}/rss/fetch`, {
         url: url
@@ -65,25 +66,48 @@ class RSSService {
       });
       
       if (response.data && response.data.success) {
-        console.log('成功通过后端API获取RSS内容');
-        // 后端已经解析好了数据，直接返回
+        const itemCount = response.data.data?.items?.length || 0;
+        logService.log('success', 'rss', `成功获取RSS源，包含 ${itemCount} 个条目`, {
+          url,
+          itemCount,
+          title: response.data.data?.title
+        });
         return response.data.data as RSSFeed;
       } else {
         const errorMsg = response.data?.error || '后端API返回错误';
         const details = response.data?.details ? ` (详情: ${response.data.details})` : '';
+        logService.log('error', 'rss', `RSS源获取失败: ${errorMsg}${details}`, {
+          url,
+          error: errorMsg,
+          details: response.data?.details
+        });
         throw new Error(errorMsg + details);
       }
     } catch (error) {
-      console.error('通过后端API获取RSS失败:', error);
       if (axios.isAxiosError(error)) {
         if (error.code === 'ECONNREFUSED') {
+          logService.log('error', 'rss', '无法连接到后端服务', {
+            url,
+            error: 'ECONNREFUSED',
+            message: '后端服务未运行'
+          });
           throw new Error('无法连接到后端服务，请确保后端服务正在运行');
         }
         if (error.response?.data?.error) {
+          logService.log('error', 'rss', `RSS源获取失败: ${error.response.data.error}`, {
+            url,
+            error: error.response.data.error,
+            status: error.response.status
+          });
           throw new Error(error.response.data.error);
         }
       }
-      throw new Error(`无法获取RSS源内容: ${error instanceof Error ? error.message : '未知错误'}`);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      logService.log('error', 'rss', `RSS源获取异常: ${errorMessage}`, {
+        url,
+        error: errorMessage
+      });
+      throw new Error(`无法获取RSS源内容: ${errorMessage}`);
     }
   }
   
@@ -133,12 +157,18 @@ class RSSService {
   
   async extractTVShows(feed: RSSFeed, sourceName: string): Promise<TVShow[]> {
     const showsMap = new Map<string, TVShow>();
+    let extractedCount = 0;
+    let newShowsCount = 0;
+    let updatedShowsCount = 0;
+    
+    logService.log('info', 'rss', `开始从RSS源 "${sourceName}" 提取影视剧信息，共 ${feed.items.length} 个条目`);
     
     for (const item of feed.items) {
       // 优先从description中提取片名，如果没有则从title中提取
       const extractedTitle = this.extractTVShowTitleFromBoth(item.title, item.description);
       
       if (extractedTitle) {
+        extractedCount++;
         let movieLink = this.extractMovieLink(item.description);
         const chineseTitle = this.extractChineseTitle(item.title, item.description);
         const category = this.categorizeShow(item.title, item.description);
@@ -157,10 +187,17 @@ class RSSService {
               const searchedLink = await tmdbService.smartSearch(extractedTitle, chineseTitle);
               if (searchedLink) {
                 movieLink = searchedLink;
-                console.log(`自动搜索到TMDB链接: ${searchedLink}`);
+                logService.log('success', 'tmdb', `自动搜索到TMDB链接: ${extractedTitle}`, {
+                  title: extractedTitle,
+                  chineseTitle,
+                  tmdbLink: searchedLink
+                });
               }
             } catch (error) {
-              console.error('TMDB自动搜索失败:', error);
+              logService.log('warn', 'tmdb', `TMDB自动搜索失败: ${extractedTitle}`, {
+                title: extractedTitle,
+                error: error instanceof Error ? error.message : '未知错误'
+              });
             }
           }
         }
@@ -177,7 +214,12 @@ class RSSService {
             existingShow.torrentLink = item.link;
             existingShow.pubDate = item.pubDate;
             existingShow.lastSeen = new Date().toISOString();
-            console.log(`更新剧集 "${extractedTitle}" 的种子链接和发布时间`);
+            updatedShowsCount++;
+            logService.log('info', 'rss', `更新剧集信息: ${extractedTitle}`, {
+              title: extractedTitle,
+              source: sourceName,
+              pubDate: item.pubDate
+            });
           }
           
           // 确保来源包含当前RSS源
@@ -186,6 +228,7 @@ class RSSService {
           }
         } else {
           // 创建新的剧集条目
+          newShowsCount++;
           showsMap.set(extractedTitle, {
             id: generateUniqueId(),
             title: extractedTitle,
@@ -200,11 +243,29 @@ class RSSService {
             pubDate: item.pubDate, // 发布日期
             torrentLink: item.link, // 种子链接
           });
+          
+          logService.log('success', 'rss', `发现新剧集: ${extractedTitle}`, {
+            title: extractedTitle,
+            chineseTitle,
+            category,
+            source: sourceName,
+            tmdbLink: movieLink
+          });
         }
       }
     }
     
-    return Array.from(showsMap.values());
+    const totalShows = Array.from(showsMap.values());
+    logService.log('success', 'rss', `RSS源 "${sourceName}" 处理完成`, {
+      source: sourceName,
+      totalItems: feed.items.length,
+      extractedCount,
+      newShows: newShowsCount,
+      updatedShows: updatedShowsCount,
+      totalShows: totalShows.length
+    });
+    
+    return totalShows;
   }
   
   private extractTVShowTitleFromBoth(title: string, description: string): string | null {

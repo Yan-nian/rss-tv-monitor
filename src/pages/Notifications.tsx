@@ -67,10 +67,34 @@ const Notifications: React.FC = () => {
       if (result.success) {
         toast.success('Discord测试消息发送成功！');
       } else {
-        toast.error(`Discord测试失败: ${result.error}`);
+        let errorMessage = `Discord测试失败: ${result.error}`;
+        if (result.error?.includes('401')) {
+          errorMessage += '\n请检查Bot Token是否正确';
+        } else if (result.error?.includes('403')) {
+          errorMessage += '\n请确保Bot有发送消息的权限';
+        } else if (result.error?.includes('404')) {
+          errorMessage += '\n请检查Channel ID是否正确';
+        }
+        toast.error(errorMessage);
       }
     } catch (error) {
-      toast.error('Discord测试失败');
+      console.error('Discord test error:', error);
+      let errorMessage = 'Discord测试失败';
+      let suggestions = '';
+      
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+        
+        if (error.message.includes('401')) {
+          suggestions = ' 请检查Bot Token是否正确';
+        } else if (error.message.includes('403')) {
+          suggestions = ' Bot没有发送消息权限，请检查权限设置';
+        } else if (error.message.includes('404')) {
+          suggestions = ' 可能原因：\n1. Channel ID不正确\n2. Bot未被邀请到服务器\n3. Bot没有查看该频道的权限\n\n解决方案：\n• 确保Bot已被邀请到Discord服务器\n• 检查Bot是否有"查看频道"和"发送消息"权限\n• 在频道设置中确认Bot可以访问该频道';
+        }
+      }
+      
+      toast.error(errorMessage + suggestions);
     } finally {
       setIsTesting(null);
     }
@@ -197,24 +221,67 @@ const Notifications: React.FC = () => {
             </div>
           </div>
           
-          <div>
-            <label htmlFor="discord-webhook-url" className="block text-sm font-medium text-gray-700">
-              Webhook URL
-            </label>
-            <div className="mt-1">
-              <input
-                type="url"
-                id="discord-webhook-url"
-                value={formData.discord.webhookUrl}
-                onChange={(e) => handleInputChange('discord', 'webhookUrl', e.target.value)}
-                className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md"
-                placeholder="https://discord.com/api/webhooks/..."
-                disabled={!formData.discord.enabled}
-              />
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="discord-bot-token" className="block text-sm font-medium text-gray-700">
+                Bot Token
+              </label>
+              <div className="mt-1">
+                <input
+                  type="password"
+                  id="discord-bot-token"
+                  value={formData.discord.botToken}
+                  onChange={(e) => handleInputChange('discord', 'botToken', e.target.value)}
+                  className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                  placeholder="请输入您的Discord Bot Token"
+                  disabled={!formData.discord.enabled}
+                />
+              </div>
+              <p className="mt-2 text-sm text-gray-500">
+                从Discord开发者门户获取的Bot Token
+              </p>
+              <div className="mt-2 p-3 bg-blue-50 rounded-md">
+                <p className="text-xs text-blue-700">
+                  <strong>完整配置步骤：</strong><br/>
+                  1. 访问 <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline">Discord开发者门户</a><br/>
+                  2. 创建新应用程序或选择现有应用程序<br/>
+                  3. 在"Bot"页面中复制Token<br/>
+                  4. 在OAuth2 → URL Generator中选择"bot"范围<br/>
+                  5. 勾选"Send Messages"和"View Channels"权限<br/>
+                  6. 使用生成的链接邀请Bot到服务器
+                </p>
+              </div>
             </div>
-            <p className="mt-2 text-sm text-gray-500">
-              Discord频道的Webhook URL
-            </p>
+            
+            <div>
+              <label htmlFor="discord-channel-id" className="block text-sm font-medium text-gray-700">
+                Channel ID
+              </label>
+              <div className="mt-1">
+                <input
+                  type="text"
+                  id="discord-channel-id"
+                  value={formData.discord.channelId}
+                  onChange={(e) => handleInputChange('discord', 'channelId', e.target.value)}
+                  className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                  placeholder="123456789012345678"
+                  disabled={!formData.discord.enabled}
+                />
+              </div>
+              <p className="mt-2 text-sm text-gray-500">
+                接收通知的Discord频道ID
+              </p>
+              <div className="mt-2 p-3 bg-blue-50 rounded-md">
+                <p className="text-xs text-blue-700">
+                  <strong>获取步骤：</strong><br/>
+                  1. 在Discord中启用开发者模式（用户设置 → 高级 → 开发者模式）<br/>
+                  2. 右键点击目标频道，选择"复制ID"<br/>
+                  3. 确保Bot已被邀请到服务器<br/>
+                  4. 检查Bot在该频道是否有"查看频道"和"发送消息"权限<br/>
+                  <strong className="text-red-600">⚠️ 如果测试失败显示404错误，通常是权限问题</strong>
+                </p>
+              </div>
+            </div>
           </div>
           
           <div className="mt-4 flex justify-end">
@@ -304,7 +371,14 @@ const Notifications: React.FC = () => {
             <div className="mt-2 text-sm text-blue-700">
               <ul className="list-disc list-inside space-y-1">
                 <li>Telegram: 需要先创建Bot并获取Token，然后获取Chat ID</li>
-                <li>Discord: 在频道设置中创建Webhook并复制URL</li>
+                <li>Discord: 在Discord开发者门户创建Bot并获取Token，然后获取频道ID</li>
+                <li><strong>Discord常见问题：</strong>
+                  <ul className="list-disc list-inside ml-4 mt-1">
+                    <li>404错误：Bot未被邀请到服务器或缺少频道权限</li>
+                    <li>403错误：Bot缺少"发送消息"权限</li>
+                    <li>401错误：Bot Token无效或过期</li>
+                  </ul>
+                </li>
                 <li>建议先测试连接确保配置正确</li>
                 <li>消息模板支持多种变量，可以自定义通知内容</li>
               </ul>

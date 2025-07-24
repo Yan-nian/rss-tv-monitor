@@ -102,9 +102,15 @@ pnpm build
 3. 在「通知设置」页面配置Token和Chat ID
 
 #### Discord通知
-1. 在Discord频道设置中创建Webhook
-2. 复制Webhook URL
-3. 在「通知设置」页面配置Webhook URL
+1. 在Discord开发者门户创建Bot应用：
+   - 访问 https://discord.com/developers/applications
+   - 创建新应用并添加Bot
+   - 获取Bot Token
+2. 获取频道ID：
+   - 在Discord中启用开发者模式
+   - 右键点击目标频道，复制ID
+3. 将Bot添加到服务器并授予发送消息权限
+4. 在「通知设置」页面配置Bot Token和频道ID
 
 ### 3. 查看统计
 
@@ -129,7 +135,8 @@ cp .env.example .env
 | NODE_ENV | 运行环境 | production | 否 |
 | TMDB_API_KEY | TMDB API密钥（用于获取影视信息） | - | 否 |
 | TELEGRAM_BOT_TOKEN | Telegram机器人令牌 | - | 否 |
-| DISCORD_WEBHOOK_URL | Discord Webhook URL | - | 否 |
+| DISCORD_BOT_TOKEN | Discord Bot Token | - | 否 |
+| DISCORD_CHANNEL_ID | Discord 频道ID | - | 否 |
 
 #### 获取API密钥
 
@@ -143,9 +150,10 @@ cp .env.example .env
 2. 获取Bot Token
 3. 获取Chat ID（发送消息后访问API获取）
 
-**Discord Webhook:**
-1. 在Discord频道设置中创建Webhook
-2. 复制Webhook URL
+**Discord Bot:**
+1. 在Discord开发者门户创建Bot应用
+2. 获取Bot Token和频道ID
+3. 将Bot添加到服务器并授予权限
 
 ### 数据存储
 

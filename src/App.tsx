@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Shows from './pages/Shows';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
+import Logs from './pages/Logs';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
             <Route path="shows" element={<Shows />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="logs" element={<Logs />} />
           </Route>
         </Routes>
         <Toaster position="top-right" richColors />
