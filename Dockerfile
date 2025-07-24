@@ -20,7 +20,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # 构建前端应用
-    RUN pnpm run build
+RUN pnpm run build
 
 # 生产阶段：包含前端和后端
 FROM node:18-alpine
@@ -38,8 +38,8 @@ COPY package.json pnpm-lock.yaml ./
 # 安装pnpm
 RUN npm install -g pnpm
 
-# 安装生产依赖
-RUN pnpm install --prod --frozen-lockfile
+# 安装所有依赖（包括devDependencies用于构建前端）
+RUN pnpm install --frozen-lockfile
 
 # 复制前端构建产物到nginx目录
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html
