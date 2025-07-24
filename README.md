@@ -257,6 +257,21 @@ docker-compose up -d
 docker image prune
 ```
 
+### 构建测试
+
+项目包含Docker构建测试脚本：
+
+```bash
+# 运行Docker构建测试
+./test-docker-build.sh
+```
+
+该脚本会：
+1. 构建Docker镜像
+2. 测试容器启动
+3. 验证服务可访问性
+4. 自动清理测试资源
+
 ## 常见问题
 
 ### Q: RSS源连接失败怎么办？

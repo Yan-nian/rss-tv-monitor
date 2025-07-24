@@ -20,7 +20,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # 构建前端应用
-RUN pnpm run build --verbose
+    RUN pnpm run build
 
 # 生产阶段：包含前端和后端
 FROM node:18-alpine
