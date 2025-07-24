@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  rss-monitor:
+    build: .
+    container_name: rss-monitor
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    volumes:
+      # 可选：挂载数据目录用于持久化存储
+      - ./data:/app/data
+    networks:
+      - rss-network
+    labels:
+      - "com.docker.compose.project=rss-monitor"
+      - "description=RSS影视剧监控工具"
+
+networks:
+  rss-network:
+    driver: bridge
+
+volumes:
+  rss-data:
+    driver: local
