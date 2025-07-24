@@ -14,4 +14,24 @@ export default defineConfig({
     }),
     tsconfigPaths()
   ],
+  define: {
+    global: 'globalThis',
+  },
+  build: {
+    rollupOptions: {
+      external: [],
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          router: ['react-router-dom'],
+          ui: ['lucide-react', 'recharts'],
+        },
+      },
+    },
+    target: 'esnext',
+    minify: 'esbuild',
+  },
+  optimizeDeps: {
+    include: ['xml2js', 'axios'],
+  },
 })
