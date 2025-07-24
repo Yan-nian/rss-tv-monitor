@@ -25,8 +25,8 @@
 
 1. 克隆项目
 ```bash
-git clone <repository-url>
-cd rss
+git clone https://github.com/Yan-nian/rss-tv-monitor.git
+cd rss-tv-monitor
 ```
 
 2. 使用Docker Compose启动
