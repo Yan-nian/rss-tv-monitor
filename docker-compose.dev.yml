@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  rss-monitor-dev:
+    build: .
+    container_name: rss-monitor-dev
+    ports:
+      - "3000:80"    # 前端访问端口
+      - "3001:3001"  # 后端API端口
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+    volumes:
+      # 开发环境挂载源代码
+      - ./src:/app/src
+      - ./server:/app/server
+      - ./public:/app/public
+      # 持久化存储应用数据
+      - rss-dev-data:/app/data
+    networks:
+      - rss-dev-network
+    labels:
+      - "com.docker.compose.project=rss-monitor-dev"
+      - "description=RSS影视剧监控工具 - 开发环境"
+      - "environment=development"
+
+networks:
+  rss-dev-network:
+    driver: bridge
+    labels:
+      - "com.docker.compose.network=rss-monitor-dev"
+
+volumes:
+  rss-dev-data:
+    driver: local
+    labels:
+      - "com.docker.compose.volume=rss-monitor-dev-data"

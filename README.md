@@ -14,14 +14,34 @@
 ## 技术栈
 
 - **前端**: React 18 + TypeScript + Tailwind CSS
+- **后端**: Node.js + Express
 - **状态管理**: Zustand
 - **路由**: React Router
 - **构建工具**: Vite
-- **部署**: Docker + Nginx
+- **部署**: Docker + Nginx + GitHub Actions
+- **容器注册**: GitHub Container Registry (GHCR)
 
 ## 快速开始
 
 ### 使用Docker部署（推荐）
+
+#### 方式一：使用预构建镜像（最简单）
+
+1. 下载配置文件
+```bash
+wget https://raw.githubusercontent.com/Yan-nian/rss-tv-monitor/main/docker-compose.yml
+```
+
+2. 启动服务
+```bash
+docker-compose up -d
+```
+
+3. 访问应用
+   - 前端界面：http://localhost:3000
+   - 后端API：http://localhost:3001
+
+#### 方式二：本地构建
 
 1. 克隆项目
 ```bash
@@ -29,13 +49,19 @@ git clone https://github.com/Yan-nian/rss-tv-monitor.git
 cd rss-tv-monitor
 ```
 
-2. 使用Docker Compose启动
+2. 修改配置使用本地构建
 ```bash
-docker-compose up -d
+# 编辑 docker-compose.yml，注释 image 行，取消注释 build 行
+sed -i 's/image: ghcr.io/#image: ghcr.io/' docker-compose.yml
+sed -i 's/# build: ./build: ./' docker-compose.yml
 ```
 
-3. 访问应用
-打开浏览器访问 `http://localhost:3000`
+3. 构建并启动
+```bash
+docker-compose up -d --build
+```
+
+> 📖 详细的Docker部署指南请参考 [DOCKER.md](./DOCKER.md)
 
 ### 本地开发
 
@@ -90,10 +116,36 @@ pnpm build
 
 ### 环境变量
 
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| PORT | 服务端口 | 3000 |
-| NODE_ENV | 运行环境 | production |
+创建 `.env` 文件来配置环境变量：
+
+```bash
+# 复制环境变量模板
+cp .env.example .env
+```
+
+| 变量名 | 说明 | 默认值 | 必需 |
+|--------|------|--------|------|
+| PORT | 后端服务端口 | 3001 | 否 |
+| NODE_ENV | 运行环境 | production | 否 |
+| TMDB_API_KEY | TMDB API密钥（用于获取影视信息） | - | 否 |
+| TELEGRAM_BOT_TOKEN | Telegram机器人令牌 | - | 否 |
+| DISCORD_WEBHOOK_URL | Discord Webhook URL | - | 否 |
+
+#### 获取API密钥
+
+**TMDB API Key:**
+1. 访问 [TMDB官网](https://www.themoviedb.org/)
+2. 注册账号并申请API密钥
+3. 在设置中配置API密钥
+
+**Telegram Bot Token:**
+1. 联系 @BotFather 创建机器人
+2. 获取Bot Token
+3. 获取Chat ID（发送消息后访问API获取）
+
+**Discord Webhook:**
+1. 在Discord频道设置中创建Webhook
+2. 复制Webhook URL
 
 ### 数据存储
 
@@ -134,17 +186,43 @@ src/
 
 ## 部署
 
+### 自动化部署
+
+本项目使用GitHub Actions自动构建Docker镜像，每次推送到主分支或创建标签时会自动：
+
+1. 构建多平台Docker镜像（linux/amd64, linux/arm64）
+2. 推送到GitHub Container Registry (GHCR)
+3. 支持语义化版本标签
+
+**镜像地址：** `ghcr.io/yan-nian/rss-tv-monitor:latest`
+
 ### Docker部署
+
+#### 使用预构建镜像
+
+```bash
+# 直接运行
+docker run -d \
+  -p 3000:80 \
+  -p 3001:3001 \
+  -v rss-data:/app/data \
+  --name rss-monitor \
+  ghcr.io/yan-nian/rss-tv-monitor:latest
+```
+
+#### 本地构建
 
 ```bash
 # 构建镜像
 docker build -t rss-monitor .
 
 # 运行容器
-docker run -d -p 3000:80 --name rss-monitor rss-monitor
+docker run -d -p 3000:80 -p 3001:3001 --name rss-monitor rss-monitor
 ```
 
 ### 使用Docker Compose
+
+#### 生产环境
 
 ```bash
 # 启动服务
@@ -155,6 +233,28 @@ docker-compose logs -f
 
 # 停止服务
 docker-compose down
+```
+
+#### 开发环境
+
+```bash
+# 使用开发配置
+docker-compose -f docker-compose.dev.yml up -d
+
+# 支持代码热重载
+```
+
+### 更新部署
+
+```bash
+# 拉取最新镜像
+docker-compose pull
+
+# 重启服务
+docker-compose up -d
+
+# 清理旧镜像
+docker image prune
 ```
 
 ## 常见问题
