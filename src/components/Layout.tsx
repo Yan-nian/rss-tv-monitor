@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BarChart3, Settings, Bell, Home, FileText } from 'lucide-react';
+import { BarChart3, Settings, Bell, Home, FileText, Bug } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const Layout: React.FC = () => {
@@ -36,6 +36,12 @@ const Layout: React.FC = () => {
       href: '/settings',
       icon: Settings,
       current: location.pathname === '/settings',
+    },
+    {
+      name: 'TMDB调试',
+      href: '/tmdb-debug',
+      icon: Bug,
+      current: location.pathname === '/tmdb-debug',
     },
   ];
   

@@ -7,6 +7,7 @@ import Shows from './pages/Shows';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import Logs from './pages/Logs';
+import TMDBDebug from './pages/TMDBDebug';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
             <Route path="notifications" element={<Notifications />} />
             <Route path="settings" element={<Settings />} />
             <Route path="logs" element={<Logs />} />
+            <Route path="tmdb-debug" element={<TMDBDebug />} />
           </Route>
         </Routes>
         <Toaster position="top-right" richColors />

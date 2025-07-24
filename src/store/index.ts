@@ -51,6 +51,14 @@ export interface TMDBSettings {
   apiKey: string;
   enabled: boolean;
   autoSearch: boolean; // 是否自动搜索缺失的TMDB链接
+  proxy: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    username?: string;
+    password?: string;
+    protocol: 'http' | 'https' | 'socks4' | 'socks5';
+  };
 }
 
 export interface AppState {
@@ -117,6 +125,14 @@ const useStore = create<AppState>()(persist(
       apiKey: '',
       enabled: false,
       autoSearch: true,
+      proxy: {
+        enabled: false,
+        host: '',
+        port: 8080,
+        username: '',
+        password: '',
+        protocol: 'http',
+      },
     },
     
     addRSSSource: (source) => {

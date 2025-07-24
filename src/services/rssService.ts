@@ -176,15 +176,36 @@ class RSSService {
         // 如果没有找到TMDB链接，且启用了自动搜索，尝试自动搜索
         if (!movieLink) {
           const { tmdbSettings } = useStore.getState();
+          
+          logService.log('info', 'tmdb', `检查TMDB自动搜索条件: ${extractedTitle}`, {
+            title: extractedTitle,
+            chineseTitle,
+            enabled: tmdbSettings.enabled,
+            autoSearch: tmdbSettings.autoSearch,
+            hasApiKey: !!tmdbSettings.apiKey,
+            apiKeyLength: tmdbSettings.apiKey?.length || 0
+          });
+          
           if (tmdbSettings.enabled && tmdbSettings.autoSearch && tmdbSettings.apiKey) {
             try {
+              logService.log('info', 'tmdb', `开始TMDB自动搜索: ${extractedTitle}`, {
+                title: extractedTitle,
+                chineseTitle
+              });
+              
               // 配置TMDB服务
               tmdbService.setConfig({
                 apiKey: tmdbSettings.apiKey,
                 enabled: tmdbSettings.enabled
               });
               
-              const searchedLink = await tmdbService.smartSearch(extractedTitle, chineseTitle);
+              // 为TMDB搜索添加超时控制，避免阻塞RSS刷新
+              const searchPromise = tmdbService.smartSearch(extractedTitle, chineseTitle);
+              const timeoutPromise = new Promise<string | null>((_, reject) => {
+                setTimeout(() => reject(new Error('TMDB搜索超时')), 15000); // 15秒超时，确保不阻塞RSS刷新
+              });
+              
+              const searchedLink = await Promise.race([searchPromise, timeoutPromise]);
               if (searchedLink) {
                 movieLink = searchedLink;
                 logService.log('success', 'tmdb', `自动搜索到TMDB链接: ${extractedTitle}`, {
@@ -192,13 +213,34 @@ class RSSService {
                   chineseTitle,
                   tmdbLink: searchedLink
                 });
+              } else {
+                logService.log('warn', 'tmdb', `TMDB自动搜索无结果: ${extractedTitle}`, {
+                  title: extractedTitle,
+                  chineseTitle
+                });
               }
             } catch (error) {
-              logService.log('warn', 'tmdb', `TMDB自动搜索失败: ${extractedTitle}`, {
+              const errorMessage = error instanceof Error ? error.message : '未知错误';
+              logService.log('error', 'tmdb', `TMDB自动搜索失败: ${extractedTitle}`, {
                 title: extractedTitle,
-                error: error instanceof Error ? error.message : '未知错误'
+                chineseTitle,
+                error: errorMessage,
+                isTimeout: errorMessage.includes('超时'),
+                stack: error instanceof Error ? error.stack : undefined
               });
+              
+              // TMDB搜索失败不应该影响RSS处理，继续处理其他项目
             }
+          } else {
+            const reasons = [];
+            if (!tmdbSettings.enabled) reasons.push('TMDB未启用');
+            if (!tmdbSettings.autoSearch) reasons.push('自动搜索未启用');
+            if (!tmdbSettings.apiKey) reasons.push('缺少API Key');
+            
+            logService.log('info', 'tmdb', `跳过TMDB自动搜索: ${extractedTitle}`, {
+              title: extractedTitle,
+              reasons: reasons.join(', ')
+            });
           }
         }
         

@@ -16,6 +16,14 @@ export interface TMDBSearchResult {
 export interface TMDBConfig {
   apiKey: string;
   enabled: boolean;
+  proxy?: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    username?: string;
+    password?: string;
+    protocol: 'http' | 'https' | 'socks4' | 'socks5';
+  };
 }
 
 class TMDBService {
@@ -24,6 +32,14 @@ class TMDBService {
     apiKey: '',
     enabled: false
   };
+  
+  // 缓存机制，减少重复请求
+  private searchCache = new Map<string, { result: string | null; timestamp: number }>();
+  private cacheExpireTime = 24 * 60 * 60 * 1000; // 24小时缓存
+  
+  // 请求限制，避免过于频繁的API调用
+  private lastRequestTime = 0;
+  private minRequestInterval = 2000; // 最小请求间隔2秒，减少API压力
 
   setConfig(config: TMDBConfig) {
     this.config = config;
@@ -33,21 +49,97 @@ class TMDBService {
     return this.config;
   }
 
-  private async makeRequest(endpoint: string, params: Record<string, any> = {}, retries: number = 2) {
+  /**
+   * 等待请求间隔，避免过于频繁的API调用
+   */
+  private async waitForRequestInterval(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest < this.minRequestInterval) {
+      const waitTime = this.minRequestInterval - timeSinceLastRequest;
+      console.log(`等待 ${waitTime}ms 以避免过于频繁的API请求`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    this.lastRequestTime = Date.now();
+  }
+  
+  /**
+   * 检查缓存中是否有有效的搜索结果
+   */
+  private getCachedResult(cacheKey: string): string | null | undefined {
+    const cached = this.searchCache.get(cacheKey);
+    if (cached) {
+      const isExpired = Date.now() - cached.timestamp > this.cacheExpireTime;
+      if (!isExpired) {
+        console.log(`使用缓存结果: ${cacheKey}`);
+        return cached.result;
+      } else {
+        // 清除过期缓存
+        this.searchCache.delete(cacheKey);
+      }
+    }
+    return undefined;
+  }
+  
+  /**
+   * 缓存搜索结果
+   */
+  private setCachedResult(cacheKey: string, result: string | null): void {
+    this.searchCache.set(cacheKey, {
+      result,
+      timestamp: Date.now()
+    });
+    
+    // 限制缓存大小，避免内存泄漏
+    if (this.searchCache.size > 1000) {
+      const oldestKey = this.searchCache.keys().next().value;
+      this.searchCache.delete(oldestKey);
+    }
+  }
+
+  private async makeRequest(endpoint: string, params: Record<string, any> = {}, retries: number = 0) {
     if (!this.config.enabled || !this.config.apiKey) {
       throw new Error('TMDB API未配置或未启用');
     }
 
+    // 等待请求间隔
+    await this.waitForRequestInterval();
+
+    // 构建axios配置
+    const axiosConfig: any = {
+      params: {
+        api_key: this.config.apiKey,
+        language: 'zh-CN',
+        ...params
+      },
+      timeout: 10000 // 增加超时时间到10秒
+    };
+
+    // 如果启用了代理，添加代理配置
+    if (this.config.proxy?.enabled && this.config.proxy.host) {
+      const proxyConfig: any = {
+        host: this.config.proxy.host,
+        port: this.config.proxy.port,
+        protocol: this.config.proxy.protocol || 'http'
+      };
+
+      // 如果有认证信息，添加认证
+      if (this.config.proxy.username && this.config.proxy.password) {
+        proxyConfig.auth = {
+          username: this.config.proxy.username,
+          password: this.config.proxy.password
+        };
+      }
+
+      axiosConfig.proxy = proxyConfig;
+      console.log(`使用代理: ${this.config.proxy.protocol}://${this.config.proxy.host}:${this.config.proxy.port}`);
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await axios.get(`${this.baseUrl}${endpoint}`, {
-          params: {
-            api_key: this.config.apiKey,
-            language: 'zh-CN',
-            ...params
-          },
-          timeout: 15000 // 增加超时时间
-        });
+        const response = await axios.get(`${this.baseUrl}${endpoint}`, axiosConfig);
         return response.data;
       } catch (error) {
         if (attempt === retries) {
@@ -73,21 +165,8 @@ class TMDBService {
       
       const results = data.results || [];
       
-      // 如果第一页结果不够好，尝试获取更多结果
-      if (results.length < 5 && data.total_pages > 1) {
-        try {
-          const page2Data = await this.makeRequest('/search/multi', {
-            query: query.trim(),
-            include_adult: false,
-            page: 2
-          });
-          results.push(...(page2Data.results || []));
-        } catch (error) {
-          console.warn('获取第二页搜索结果失败:', error);
-        }
-      }
-      
-      return results;
+      // 只使用第一页结果，减少API调用
+      return results.slice(0, 10); // 限制结果数量
     } catch (error) {
       console.error('TMDB搜索失败:', error);
       return [];
@@ -107,23 +186,7 @@ class TMDBService {
         media_type: 'tv' as const
       })) || [];
       
-      // 如果第一页结果不够好，尝试获取更多结果
-      if (results.length < 5 && data.total_pages > 1) {
-        try {
-          const page2Data = await this.makeRequest('/search/tv', {
-            query: query.trim(),
-            include_adult: false,
-            page: 2
-          });
-          const page2Results = page2Data.results?.map((item: any) => ({
-            ...item,
-            media_type: 'tv' as const
-          })) || [];
-          results.push(...page2Results);
-        } catch (error) {
-          console.warn('获取电视剧搜索第二页结果失败:', error);
-        }
-      }
+      // 只使用第一页结果，减少API调用
       
       return results;
     } catch (error) {
@@ -145,23 +208,7 @@ class TMDBService {
         media_type: 'movie' as const
       })) || [];
       
-      // 如果第一页结果不够好，尝试获取更多结果
-      if (results.length < 5 && data.total_pages > 1) {
-        try {
-          const page2Data = await this.makeRequest('/search/movie', {
-            query: query.trim(),
-            include_adult: false,
-            page: 2
-          });
-          const page2Results = page2Data.results?.map((item: any) => ({
-            ...item,
-            media_type: 'movie' as const
-          })) || [];
-          results.push(...page2Results);
-        } catch (error) {
-          console.warn('获取电影搜索第二页结果失败:', error);
-        }
-      }
+      // 只使用第一页结果，减少API调用
       
       return results;
     } catch (error) {
@@ -171,7 +218,7 @@ class TMDBService {
   }
 
   /**
-   * 预处理搜索查询，清理和标准化标题
+   * 预处理搜索查询，清理和标准化标题（优化版，减少查询变体）
    */
   private preprocessQuery(query: string): string[] {
     if (!query) return [];
@@ -179,96 +226,40 @@ class TMDBService {
     const variants = [];
     let cleanQuery = query.trim();
     
-    // 移除常见的无关信息
+    // 移除常见的无关信息（更激进的清理）
     cleanQuery = cleanQuery.replace(/\b(S\d+E?\d*|Season\s+\d+|第\d+季|全\d+集)\b/gi, '');
     cleanQuery = cleanQuery.replace(/\b(\d{4}|\d{3,4}p|HD|4K|BluRay|WEB|HDTV|DVDRip)\b/gi, '');
     cleanQuery = cleanQuery.replace(/\b(H\.?264|H\.?265|x264|x265|HEVC|AVC)\b/gi, '');
     cleanQuery = cleanQuery.replace(/\b(REMUX|BDRip|WEBRip|HDRip|CAMRip)\b/gi, '');
+    cleanQuery = cleanQuery.replace(/\b(更新|完结|连载|全集)\b/gi, '');
     cleanQuery = cleanQuery.replace(/\[.*?\]/g, ''); // 移除方括号内容
     cleanQuery = cleanQuery.replace(/\(.*?\)/g, ''); // 移除圆括号内容
     cleanQuery = cleanQuery.replace(/[\-_]+/g, ' '); // 替换连字符和下划线为空格
     cleanQuery = cleanQuery.replace(/\s+/g, ' ').trim(); // 合并多个空格
     
-    if (cleanQuery) {
+    if (cleanQuery && cleanQuery.length > 2) {
       variants.push(cleanQuery);
       
-      // 如果包含冒号，尝试分割
-      if (cleanQuery.includes(':')) {
-        const parts = cleanQuery.split(':');
-        if (parts.length === 2) {
-          variants.push(parts[0].trim());
-          variants.push(parts[1].trim());
-        }
-      }
-      
-      // 如果包含副标题分隔符，尝试只取主标题
-      const subtitleSeparators = [' - ', ' – ', ' — ', ' | ', ' / '];
+      // 只处理最明显的分隔符，取主标题
+      const subtitleSeparators = [' - ', ' – ', ' — ', ' | ', ' / ', ':'];
       for (const sep of subtitleSeparators) {
         if (cleanQuery.includes(sep)) {
           const parts = cleanQuery.split(sep);
           const mainTitle = parts[0].trim();
           if (mainTitle && mainTitle !== cleanQuery && mainTitle.length > 2) {
             variants.push(mainTitle);
-          }
-          // 也尝试第二部分（可能是英文名）
-          if (parts.length > 1) {
-            const secondTitle = parts[1].trim();
-            if (secondTitle && secondTitle !== cleanQuery && secondTitle.length > 2) {
-              variants.push(secondTitle);
-            }
+            break; // 只取第一个有效的主标题
           }
         }
       }
-      
-      // 处理中英文混合标题
-      const chineseMatch = cleanQuery.match(/([\u4e00-\u9fff][\u4e00-\u9fff\s·的之]+)/g);
-      const englishMatch = cleanQuery.match(/([A-Za-z][A-Za-z\s]+)/g);
-      
-      if (chineseMatch && chineseMatch.length > 0) {
-        chineseMatch.forEach(match => {
-          const cleaned = match.trim().replace(/[·的之]$/, '');
-          if (cleaned.length > 1) {
-            variants.push(cleaned);
-          }
-        });
-      }
-      
-      if (englishMatch && englishMatch.length > 0) {
-        englishMatch.forEach(match => {
-          const cleaned = match.trim();
-          if (cleaned.length > 2) {
-            variants.push(cleaned);
-          }
-        });
-      }
-      
-      // 如果标题很长，尝试取前几个关键词
-      const words = cleanQuery.split(' ');
-      if (words.length > 3) {
-        variants.push(words.slice(0, 3).join(' '));
-        variants.push(words.slice(0, 2).join(' '));
-        
-        // 如果第一个词是英文且较长，单独尝试
-        if (words[0].length > 3 && /^[A-Za-z]+$/.test(words[0])) {
-          variants.push(words[0]);
-        }
-      }
-      
-      // 移除常见的无意义词汇
-      const meaninglessWords = ['the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by'];
-      const filteredVariants = variants.map(variant => {
-        const words = variant.split(' ');
-        const filteredWords = words.filter(word => 
-          !meaninglessWords.includes(word.toLowerCase()) || words.length <= 2
-        );
-        return filteredWords.join(' ');
-      }).filter(v => v.length > 0);
-      
-      variants.push(...filteredVariants);
     }
     
-    // 去重并过滤掉太短的查询
-    return [...new Set(variants)].filter(v => v.length >= 2);
+    // 去重并只返回最佳的1个变体以减少API调用
+    const uniqueVariants = [...new Set(variants)]
+      .filter(v => v.length > 2)
+      .sort((a, b) => b.length - a.length); // 按长度排序，较长的通常更精确
+    
+    return uniqueVariants.slice(0, 1); // 只返回1个最佳变体
   }
 
   /**
@@ -404,23 +395,21 @@ class TMDBService {
       return null;
     }
 
-    const allQueries = [];
+    // 生成缓存键
+    const cacheKey = `${title}|${chineseTitle || ''}`;
     
-    // 添加中文标题的变体（如果有）
-    if (chineseTitle && chineseTitle.trim()) {
-      const chineseVariants = this.preprocessQuery(chineseTitle);
-      allQueries.push(...chineseVariants);
-    }
-    
-    // 添加英文标题的变体
-    if (title && title.trim()) {
-      const englishVariants = this.preprocessQuery(title);
-      allQueries.push(...englishVariants);
+    // 检查缓存
+    const cachedResult = this.getCachedResult(cacheKey);
+    if (cachedResult !== undefined) {
+      return cachedResult;
     }
 
-    // 去重并按长度排序（较长的查询通常更精确）
-    const uniqueQueries = [...new Set(allQueries)].sort((a, b) => b.length - a.length);
-    console.log(`TMDB搜索查询变体 (${uniqueQueries.length}个): ${uniqueQueries.join(', ')}`);
+    console.log(`开始TMDB搜索: "${title}" (仅使用英文标题)`);
+
+    // 优化查询策略：优先使用最有可能成功的查询
+    const prioritizedQueries = this.generatePrioritizedQueries(title, chineseTitle);
+    
+    console.log(`TMDB搜索查询变体 (${prioritizedQueries.length}个): ${prioritizedQueries.join(', ')}`);
 
     let bestResult: { url: string; score: number; query: string } | null = null;
     const searchedQueries = new Set<string>();
@@ -428,7 +417,59 @@ class TMDBService {
     // 提取年份信息用于过滤
     const extractedYear = this.extractYearFromQuery(title + ' ' + (chineseTitle || ''));
     
-    for (const query of uniqueQueries) {
+    let searchResult: string | null = null;
+    
+    try {
+      searchResult = await this.performOptimizedSearch(prioritizedQueries, extractedYear, searchedQueries, bestResult);
+    } catch (error) {
+      console.error('TMDB搜索过程中发生错误:', error);
+      searchResult = null;
+    }
+    
+    // 缓存结果
+    this.setCachedResult(cacheKey, searchResult);
+    
+    if (searchResult) {
+      console.log(`✅ TMDB搜索成功: ${searchResult}`);
+    } else {
+      console.log('❌ TMDB搜索未找到匹配结果');
+    }
+    
+    return searchResult;
+  }
+  
+  /**
+   * 生成优先级查询列表，仅使用英文标题进行搜索
+   */
+  private generatePrioritizedQueries(title: string, chineseTitle?: string): string[] {
+    const queries: string[] = [];
+    
+    // 仅使用英文标题（原始标题）
+    if (title && title.trim()) {
+      queries.push(title.trim());
+      
+      // 如果需要，添加预处理后的英文标题
+      const processed = this.preprocessQuery(title)[0]; // 只取第一个最佳变体
+      if (processed && processed !== title.trim() && !queries.includes(processed)) {
+        queries.push(processed);
+      }
+    }
+    
+    // 去重并限制数量，最多2个查询以减少API压力
+    return [...new Set(queries)].slice(0, 2);
+  }
+  
+  /**
+   * 执行优化的搜索流程
+   */
+  private async performOptimizedSearch(
+    queries: string[], 
+    extractedYear: number | null,
+    searchedQueries: Set<string>,
+    bestResult: { url: string; score: number; query: string } | null
+  ): Promise<string | null> {
+    
+    for (const query of queries) {
       if (searchedQueries.has(query)) continue;
       searchedQueries.add(query);
       
@@ -483,7 +524,7 @@ class TMDBService {
         }
         
         // 如果多媒体搜索没有好结果，分别尝试电视剧和电影搜索
-        if (!bestResult || bestResult.score < 40) {
+        if (!bestResult || bestResult.score < 65) {
           const tvResults = await this.searchTV(query);
           if (tvResults.length > 0) {
             let bestTv = tvResults
@@ -498,11 +539,17 @@ class TMDBService {
               }
             }
             
-            if (bestTv.score > 25) {
+            if (bestTv.score > 30) {
               const tmdbUrl = `https://www.themoviedb.org/tv/${bestTv.result.id}`;
               if (!bestResult || bestTv.score > bestResult.score) {
                 bestResult = { url: tmdbUrl, score: bestTv.score, query };
                 console.log(`TV搜索找到高分链接 (分数: ${bestTv.score}): ${tmdbUrl}`);
+                
+                // 如果找到高分匹配，提前返回以减少API调用
+                if (bestTv.score >= 75) {
+                  console.log(`🎯 找到高分匹配，提前返回: ${tmdbUrl}`);
+                  return tmdbUrl;
+                }
               }
             }
           }
@@ -521,24 +568,30 @@ class TMDBService {
               }
             }
             
-            if (bestMovie.score > 25) {
+            if (bestMovie.score > 30) {
               const tmdbUrl = `https://www.themoviedb.org/movie/${bestMovie.result.id}`;
               if (!bestResult || (bestMovie.score > bestResult.score && !bestResult.url.includes('/tv/'))) {
                 bestResult = { url: tmdbUrl, score: bestMovie.score, query };
                 console.log(`电影搜索找到高分链接 (分数: ${bestMovie.score}): ${tmdbUrl}`);
+                
+                // 如果找到高分匹配，提前返回以减少API调用
+                if (bestMovie.score >= 75) {
+                  console.log(`🎯 找到高分匹配，提前返回: ${tmdbUrl}`);
+                  return tmdbUrl;
+                }
               }
             }
           }
         }
         
-        // 如果找到了高分结果，可以提前返回
-        if (bestResult && bestResult.score >= 85) {
+        // 如果找到了高分结果，可以提前返回（提高阈值以确保高质量匹配）
+        if (bestResult && bestResult.score >= 75) {
           console.log(`找到高质量匹配，提前返回: ${bestResult.url} (查询: "${bestResult.query}")`);
           return bestResult.url;
         }
         
-        // 限制搜索次数以避免过多API调用
-        if (searchedQueries.size >= 8) {
+        // 限制搜索次数以避免过多API调用（减少到1次以进一步优化）
+        if (searchedQueries.size >= 1) {
           console.log('已达到最大搜索次数限制，停止搜索');
           break;
         }
@@ -554,7 +607,7 @@ class TMDBService {
       return bestResult.url;
     }
     
-    console.log(`未找到"${title}"的TMDB链接`);
+    console.log('未找到TMDB链接');
     return null;
   }
 

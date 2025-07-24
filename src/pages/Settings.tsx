@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, Trash2, Edit, Save, X, Download, Upload, RefreshCw, Key, Eye, EyeOff } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, Edit, Save, X, Download, Upload, RefreshCw, Key, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import useStore from '../store';
 import { rssService } from '../services/rssService';
 import { autoRefreshManager } from '../utils/autoRefreshManager';
@@ -26,6 +26,16 @@ const Settings: React.FC = () => {
   const [isTestingConnection, setIsTestingConnection] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [isTestingTMDB, setIsTestingTMDB] = useState(false);
+  
+  // 安全地获取proxy设置，提供默认值
+  const safeProxy = tmdbSettings?.proxy || {
+    enabled: false,
+    host: '',
+    port: 8080,
+    username: '',
+    password: '',
+    protocol: 'http' as const
+  };
   
   const handleEditSource = (source: any) => {
     setEditingSource(source.id);
@@ -187,14 +197,18 @@ const Settings: React.FC = () => {
   };
 
   const handleTestTMDBConnection = async () => {
-    if (!tmdbSettings.apiKey.trim()) {
+    if (!tmdbSettings?.apiKey?.trim()) {
       toast.error('请先输入TMDB API Key');
       return;
     }
 
     setIsTestingTMDB(true);
     try {
-      tmdbService.setConfig({ apiKey: tmdbSettings.apiKey, enabled: true });
+      tmdbService.setConfig({ 
+        apiKey: tmdbSettings.apiKey, 
+        enabled: true,
+        proxy: safeProxy
+      });
       const isValid = await tmdbService.testConnection();
       
       if (isValid) {
@@ -208,6 +222,18 @@ const Settings: React.FC = () => {
       setIsTestingTMDB(false);
     }
   };
+  
+  // 如果tmdbSettings未初始化，显示加载状态
+  if (!tmdbSettings) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-2 text-sm text-gray-500">加载设置中...</p>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <div className="space-y-6">
@@ -472,7 +498,7 @@ const Settings: React.FC = () => {
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={tmdbSettings.enabled}
+                  checked={tmdbSettings.enabled || false}
                   onChange={(e) => handleTMDBSettingsChange('enabled', e.target.checked)}
                   className="sr-only peer"
                 />
@@ -488,7 +514,7 @@ const Settings: React.FC = () => {
                 <div className="relative">
                   <input
                     type={showApiKey ? 'text' : 'password'}
-                    value={tmdbSettings.apiKey}
+                    value={tmdbSettings.apiKey || ''}
                     onChange={(e) => handleTMDBSettingsChange('apiKey', e.target.value)}
                     placeholder="请输入TMDB API Key"
                     className="block w-full pr-20 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
@@ -503,7 +529,7 @@ const Settings: React.FC = () => {
                     </button>
                     <button
                       onClick={handleTestTMDBConnection}
-                      disabled={isTestingTMDB || !tmdbSettings.apiKey.trim()}
+                      disabled={isTestingTMDB || !tmdbSettings.apiKey?.trim()}
                       className="ml-1 mr-1 px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isTestingTMDB ? '测试中...' : '测试'}
@@ -525,13 +551,122 @@ const Settings: React.FC = () => {
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                      type="checkbox"
-                     checked={tmdbSettings.autoSearch}
+                     checked={tmdbSettings.autoSearch || false}
                      onChange={(e) => handleTMDBSettingsChange('autoSearch', e.target.checked)}
                      disabled={!tmdbSettings.enabled}
                      className="sr-only peer"
                    />
                   <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 peer-disabled:opacity-50"></div>
                 </label>
+              </div>
+              
+              {/* 代理设置 */}
+              <div className="border-t border-gray-200 pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900">代理设置</h4>
+                    <p className="text-sm text-gray-500">
+                      如果无法直接访问TMDB API，请配置代理
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={safeProxy.enabled}
+                      onChange={(e) => handleTMDBSettingsChange('proxy', { ...safeProxy, enabled: e.target.checked })}
+                      disabled={!tmdbSettings.enabled}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 peer-disabled:opacity-50"></div>
+                  </label>
+                </div>
+                
+                {safeProxy.enabled && (
+                  <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          代理主机
+                        </label>
+                        <input
+                          type="text"
+                          value={safeProxy.host}
+                          onChange={(e) => handleTMDBSettingsChange('proxy', { ...safeProxy, host: e.target.value })}
+                          placeholder="例如: 127.0.0.1"
+                          className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          端口
+                        </label>
+                        <input
+                          type="number"
+                          value={safeProxy.port}
+                          onChange={(e) => handleTMDBSettingsChange('proxy', { ...safeProxy, port: parseInt(e.target.value) || 8080 })}
+                          placeholder="8080"
+                          className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        协议类型
+                      </label>
+                      <select
+                        value={safeProxy.protocol}
+                        onChange={(e) => handleTMDBSettingsChange('proxy', { ...safeProxy, protocol: e.target.value as any })}
+                        className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      >
+                        <option value="http">HTTP</option>
+                        <option value="https">HTTPS</option>
+                        <option value="socks4">SOCKS4</option>
+                        <option value="socks5">SOCKS5</option>
+                      </select>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          用户名（可选）
+                        </label>
+                        <input
+                          type="text"
+                          value={safeProxy.username || ''}
+                          onChange={(e) => handleTMDBSettingsChange('proxy', { ...safeProxy, username: e.target.value })}
+                          placeholder="代理用户名"
+                          className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          密码（可选）
+                        </label>
+                        <input
+                          type="password"
+                          value={safeProxy.password || ''}
+                          onChange={(e) => handleTMDBSettingsChange('proxy', { ...safeProxy, password: e.target.value })}
+                          placeholder="代理密码"
+                          className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+                      <div className="flex">
+                        <div className="flex-shrink-0">
+                          <AlertCircle className="h-4 w-4 text-blue-400" />
+                        </div>
+                        <div className="ml-2">
+                          <p className="text-xs text-blue-700">
+                            代理配置示例：HTTP代理 127.0.0.1:8080，SOCKS5代理 127.0.0.1:1080
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             
