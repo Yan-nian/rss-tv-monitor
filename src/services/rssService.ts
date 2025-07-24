@@ -50,7 +50,7 @@ const TV_SHOW_PATTERNS = [
 ];
 
 class RSSService {
-  private apiBaseUrl = 'http://localhost:3001/api';
+  private apiBaseUrl = '/api';
   
   async fetchRSSFeed(url: string): Promise<RSSFeed> {
     try {
