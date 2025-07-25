@@ -67,6 +67,7 @@ export interface AppState {
   addRSSSource: (source: Omit<RSSSource, 'id'>) => void;
   updateRSSSource: (id: string, updates: Partial<RSSSource>) => void;
   removeRSSSource: (id: string) => void;
+  setRSSSources: (sources: RSSSource[]) => void;
   
   // TV Shows
   tvShows: TVShow[];
@@ -157,6 +158,10 @@ const useStore = create<AppState>()(persist(
       set((state) => ({
         rssSources: state.rssSources.filter((source) => source.id !== id),
       }));
+    },
+    
+    setRSSSources: (sources) => {
+      set({ rssSources: sources });
     },
     
     addTVShow: (show) => {

@@ -52,32 +52,35 @@ const Dashboard: React.FC = () => {
         return;
       }
       
-      const newSource = {
-        name: newSourceName,
-        url: newSourceUrl,
-        status: 'active' as const,
-        lastUpdate: new Date().toISOString(),
-        updateInterval: 30, // 默认30分钟
-      };
+      // 调用后端API添加RSS源
+      const response = await fetch('/api/rss/sources', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newSourceName,
+          url: newSourceUrl,
+          updateInterval: 30, // 默认30分钟
+        }),
+      });
       
-      addRSSSource(newSource);
+      const result = await response.json();
       
-      // 为新添加的RSS源启动定时器
-      // 注意：由于addRSSSource会生成新的id，我们需要从store中获取最新添加的源
-      setTimeout(() => {
-        const { rssSources } = useStore.getState();
-        const latestSource = rssSources[rssSources.length - 1];
-        if (latestSource) {
-          autoRefreshManager.updateTimer(latestSource.id, latestSource.updateInterval);
-        }
-      }, 0);
-      
-      setNewSourceName('');
-      setNewSourceUrl('');
-      setIsAddingSource(false);
-      toast.success('RSS源添加成功');
+      if (result.success) {
+        // 同步后端数据到前端
+        await autoRefreshManager.syncWithBackend();
+        
+        setNewSourceName('');
+        setNewSourceUrl('');
+        setIsAddingSource(false);
+        toast.success('RSS源添加成功');
+      } else {
+        throw new Error(result.error || '添加RSS源失败');
+      }
     } catch (error) {
-      toast.error('添加RSS源失败');
+      const errorMessage = error instanceof Error ? error.message : '添加RSS源失败';
+      toast.error(errorMessage);
     }
   };
   

@@ -3,9 +3,150 @@ import cors from 'cors';
 import axios from 'axios';
 import { parseString } from 'xml2js';
 import path from 'path';
+import fs from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// 存储RSS源和自动刷新配置的内存数据
+let rssSourcesData = [];
+let autoRefreshEnabled = true;
+let refreshTimers = new Map();
+
+// 数据持久化文件路径
+const dataDir = process.env.NODE_ENV === 'production' ? '/app/data' : './data';
+const DATA_FILE = path.join(dataDir, 'rss-data.json');
+
+// 确保数据目录存在
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+// 加载持久化数据
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      rssSourcesData = data.rssSources || [];
+      autoRefreshEnabled = data.autoRefreshEnabled !== false;
+      console.log('已加载持久化数据:', { sources: rssSourcesData.length, autoRefresh: autoRefreshEnabled });
+    }
+  } catch (error) {
+    console.error('加载数据失败:', error.message);
+  }
+}
+
+// 保存数据到文件
+function saveData() {
+  try {
+    const data = {
+      rssSources: rssSourcesData,
+      autoRefreshEnabled,
+      lastSaved: new Date().toISOString()
+    };
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error('保存数据失败:', error.message);
+  }
+}
+
+// 自动刷新RSS源的函数
+async function refreshRSSSource(source) {
+  try {
+    console.log(`开始自动刷新RSS源: ${source.name}`);
+    
+    const response = await axios.get(source.url, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+    });
+
+    if (response.data && typeof response.data === 'string') {
+      const parsedData = await parseXML(response.data);
+      console.log(`RSS源 ${source.name} 自动刷新成功，包含 ${parsedData.items?.length || 0} 个条目`);
+      
+      // 更新源的最后更新时间
+      const sourceIndex = rssSourcesData.findIndex(s => s.id === source.id);
+      if (sourceIndex !== -1) {
+        rssSourcesData[sourceIndex].lastUpdate = new Date().toISOString();
+        rssSourcesData[sourceIndex].status = 'active';
+        saveData();
+      }
+      
+      return parsedData;
+    }
+  } catch (error) {
+    console.error(`RSS源 ${source.name} 自动刷新失败:`, error.message);
+    
+    // 更新源状态为错误
+    const sourceIndex = rssSourcesData.findIndex(s => s.id === source.id);
+    if (sourceIndex !== -1) {
+      rssSourcesData[sourceIndex].status = 'error';
+      saveData();
+    }
+  }
+}
+
+// 启动单个RSS源的定时器
+function startRSSTimer(source) {
+  if (!autoRefreshEnabled || !source.updateInterval) return;
+  
+  // 清除现有定时器
+  if (refreshTimers.has(source.id)) {
+    clearInterval(refreshTimers.get(source.id));
+  }
+  
+  // 设置新定时器
+  const intervalMs = source.updateInterval * 60 * 1000; // 转换为毫秒
+  const timer = setInterval(() => {
+    refreshRSSSource(source);
+  }, intervalMs);
+  
+  refreshTimers.set(source.id, timer);
+  console.log(`已启动RSS源 ${source.name} 的定时器，间隔 ${source.updateInterval} 分钟`);
+}
+
+// 停止单个RSS源的定时器
+function stopRSSTimer(sourceId) {
+  if (refreshTimers.has(sourceId)) {
+    clearInterval(refreshTimers.get(sourceId));
+    refreshTimers.delete(sourceId);
+    console.log(`已停止RSS源 ${sourceId} 的定时器`);
+  }
+}
+
+// 启动所有RSS源的定时器
+function startAllRSSTimers() {
+  if (!autoRefreshEnabled) {
+    console.log('自动刷新已禁用，跳过启动定时器');
+    return;
+  }
+  
+  console.log(`启动所有RSS源定时器，共 ${rssSourcesData.length} 个源`);
+  rssSourcesData.forEach(source => {
+    if (source.updateInterval > 0) {
+      startRSSTimer(source);
+    }
+  });
+}
+
+// 停止所有定时器
+function stopAllRSSTimers() {
+  refreshTimers.forEach((timer, sourceId) => {
+    clearInterval(timer);
+  });
+  refreshTimers.clear();
+  console.log('已停止所有RSS定时器');
+}
+
+// 初始化时加载数据并启动定时器
+loadData();
+setTimeout(() => {
+  startAllRSSTimers();
+}, 5000); // 延迟5秒启动，确保服务完全启动
 
 // 中间件
 app.use(cors());
@@ -199,6 +340,188 @@ app.post('/api/notifications/discord/test', async (req, res) => {
       error: errorMessage,
       details: error.response?.data?.message || error.message
     });
+  }
+});
+
+// RSS源管理API
+app.get('/api/rss/sources', (req, res) => {
+  res.json({
+    success: true,
+    data: rssSourcesData
+  });
+});
+
+app.post('/api/rss/sources', (req, res) => {
+  try {
+    const { name, url, updateInterval = 30 } = req.body;
+    
+    if (!name || !url) {
+      return res.status(400).json({ error: 'RSS源名称和URL不能为空' });
+    }
+
+    const newSource = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      name,
+      url,
+      updateInterval,
+      status: 'active',
+      lastUpdate: new Date().toISOString()
+    };
+
+    rssSourcesData.push(newSource);
+    saveData();
+    
+    // 启动新源的定时器
+    if (autoRefreshEnabled) {
+      startRSSTimer(newSource);
+    }
+
+    res.json({
+      success: true,
+      data: newSource
+    });
+  } catch (error) {
+    console.error('添加RSS源失败:', error.message);
+    res.status(500).json({ error: '添加RSS源失败' });
+  }
+});
+
+app.put('/api/rss/sources/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    
+    const sourceIndex = rssSourcesData.findIndex(s => s.id === id);
+    if (sourceIndex === -1) {
+      return res.status(404).json({ error: 'RSS源不存在' });
+    }
+
+    // 更新源信息
+    rssSourcesData[sourceIndex] = { ...rssSourcesData[sourceIndex], ...updates };
+    saveData();
+    
+    // 如果更新了刷新间隔，重启定时器
+    if (updates.updateInterval !== undefined) {
+      stopRSSTimer(id);
+      if (autoRefreshEnabled) {
+        startRSSTimer(rssSourcesData[sourceIndex]);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: rssSourcesData[sourceIndex]
+    });
+  } catch (error) {
+    console.error('更新RSS源失败:', error.message);
+    res.status(500).json({ error: '更新RSS源失败' });
+  }
+});
+
+app.delete('/api/rss/sources/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const sourceIndex = rssSourcesData.findIndex(s => s.id === id);
+    if (sourceIndex === -1) {
+      return res.status(404).json({ error: 'RSS源不存在' });
+    }
+
+    // 停止定时器
+    stopRSSTimer(id);
+    
+    // 删除源
+    rssSourcesData.splice(sourceIndex, 1);
+    saveData();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('删除RSS源失败:', error.message);
+    res.status(500).json({ error: '删除RSS源失败' });
+  }
+});
+
+// 自动刷新控制API
+app.get('/api/rss/auto-refresh', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      enabled: autoRefreshEnabled,
+      activeTimers: refreshTimers.size,
+      totalSources: rssSourcesData.length
+    }
+  });
+});
+
+app.post('/api/rss/auto-refresh', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    
+    autoRefreshEnabled = enabled;
+    saveData();
+    
+    if (enabled) {
+      startAllRSSTimers();
+    } else {
+      stopAllRSSTimers();
+    }
+
+    res.json({
+      success: true,
+      data: {
+        enabled: autoRefreshEnabled,
+        activeTimers: refreshTimers.size
+      }
+    });
+  } catch (error) {
+    console.error('切换自动刷新失败:', error.message);
+    res.status(500).json({ error: '切换自动刷新失败' });
+  }
+});
+
+// 手动刷新单个RSS源
+app.post('/api/rss/refresh/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const source = rssSourcesData.find(s => s.id === id);
+    if (!source) {
+      return res.status(404).json({ error: 'RSS源不存在' });
+    }
+
+    const result = await refreshRSSSource(source);
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('手动刷新RSS源失败:', error.message);
+    res.status(500).json({ error: '手动刷新失败' });
+  }
+});
+
+// 手动刷新所有RSS源
+app.post('/api/rss/refresh-all', async (req, res) => {
+  try {
+    const results = [];
+    
+    for (const source of rssSourcesData) {
+      try {
+        const result = await refreshRSSSource(source);
+        results.push({ sourceId: source.id, success: true, data: result });
+      } catch (error) {
+        results.push({ sourceId: source.id, success: false, error: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: results
+    });
+  } catch (error) {
+    console.error('批量刷新RSS源失败:', error.message);
+    res.status(500).json({ error: '批量刷新失败' });
   }
 });
 

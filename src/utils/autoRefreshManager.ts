@@ -3,99 +3,148 @@ import { rssService } from '../services/rssService';
 import { notificationService } from '../services/notificationService';
 import { logService } from '../services/logService';
 import { toast } from 'sonner';
+import axios from 'axios';
 
 class AutoRefreshManager {
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private isInitialized = false;
+  private syncTimer: NodeJS.Timeout | null = null;
+  private apiBaseUrl = '/api';
 
   initialize() {
     if (this.isInitialized) return;
     this.isInitialized = true;
     logService.log('info', 'system', '自动刷新管理器初始化完成');
     
-    // 延迟启动定时器，确保store已完全加载
-    setTimeout(() => {
-      this.startAllTimers();
-    }, 1000);
+    // 同步后端状态
+    this.syncWithBackend();
+    
+    // 启动定期同步定时器（每30秒检查一次后端状态）
+    this.syncTimer = setInterval(() => {
+      this.syncWithBackend();
+    }, 30000);
+    
+    logService.log('info', 'system', '已启动与后端的状态同步');
   }
 
-  startAllTimers() {
-    const { rssSources, autoRefreshEnabled } = useStore.getState();
-    
-    if (!autoRefreshEnabled) {
-      logService.log('info', 'system', '自动刷新已禁用，跳过启动定时器');
-      return;
+  // 与后端同步RSS源和自动刷新状态
+  async syncWithBackend() {
+    try {
+      // 获取后端的RSS源列表
+      const sourcesResponse = await axios.get(`${this.apiBaseUrl}/rss/sources`);
+      if (sourcesResponse.data.success) {
+        const backendSources = sourcesResponse.data.data;
+        const { rssSources, setRSSSources } = useStore.getState();
+        
+        // 如果后端有数据且与前端不同，则同步到前端
+        if (backendSources.length > 0 && JSON.stringify(backendSources) !== JSON.stringify(rssSources)) {
+          setRSSSources(backendSources);
+          logService.log('info', 'system', `已同步后端RSS源数据，共 ${backendSources.length} 个源`);
+        }
+      }
+      
+      // 获取后端的自动刷新状态
+      const refreshResponse = await axios.get(`${this.apiBaseUrl}/rss/auto-refresh`);
+      if (refreshResponse.data.success) {
+        const backendStatus = refreshResponse.data.data;
+        const { autoRefreshEnabled, setAutoRefreshEnabled } = useStore.getState();
+        
+        if (backendStatus.enabled !== autoRefreshEnabled) {
+          setAutoRefreshEnabled(backendStatus.enabled);
+          logService.log('info', 'system', `已同步后端自动刷新状态: ${backendStatus.enabled}`);
+        }
+      }
+    } catch (error) {
+      // 静默处理同步错误，避免干扰用户体验
+      console.warn('后端状态同步失败:', error instanceof Error ? error.message : '未知错误');
     }
-
-    logService.log('info', 'system', `启动所有RSS源定时器，共 ${rssSources.length} 个源`);
-    rssSources.forEach(source => {
-      this.startTimer(source.id, source.updateInterval);
-    });
   }
 
-  startTimer(sourceId: string, intervalMinutes: number) {
-    // 清除现有定时器
-    this.stopTimer(sourceId);
-    
-    // 验证参数
-    if (!sourceId || intervalMinutes <= 0) {
-      logService.log('error', 'system', '启动定时器失败：参数无效', {
-        sourceId,
-        intervalMinutes
+  // 启动所有定时器（现在委托给后端）
+  async startAllTimers() {
+    try {
+      const response = await axios.post(`${this.apiBaseUrl}/rss/auto-refresh`, {
+        enabled: true
       });
-      return;
+      
+      if (response.data.success) {
+        logService.log('info', 'system', '已启用后端自动刷新');
+      }
+    } catch (error) {
+      logService.log('error', 'system', '启用后端自动刷新失败', {
+        error: error instanceof Error ? error.message : '未知错误'
+      });
     }
-    
-    // 设置新定时器
-    const intervalMs = intervalMinutes * 60 * 1000;
-    const timer = setInterval(() => {
-      logService.log('info', 'system', `定时器触发: ${sourceId}`);
-      this.refreshSource(sourceId);
-    }, intervalMs);
-    
-    this.timers.set(sourceId, timer);
-    
-    const { rssSources } = useStore.getState();
-    const source = rssSources.find(s => s.id === sourceId);
-    logService.log('info', 'system', `启动定时器: ${source?.name || sourceId}`, {
-      sourceId,
-      sourceName: source?.name,
-      intervalMinutes,
-      intervalMs,
-      nextTrigger: new Date(Date.now() + intervalMs).toLocaleString('zh-CN')
-    });
   }
 
+  // 启动单个定时器（现在委托给后端）
+  async startTimer(sourceId: string, intervalMinutes: number) {
+    try {
+      const response = await axios.put(`${this.apiBaseUrl}/rss/sources/${sourceId}`, {
+        updateInterval: intervalMinutes
+      });
+      
+      if (response.data.success) {
+        logService.log('info', 'system', `已更新RSS源定时器: ${sourceId}`, {
+          sourceId,
+          intervalMinutes
+        });
+      }
+    } catch (error) {
+      logService.log('error', 'system', '更新RSS源定时器失败', {
+        sourceId,
+        intervalMinutes,
+        error: error instanceof Error ? error.message : '未知错误'
+      });
+    }
+  }
+
+  // 停止单个定时器（前端不再需要管理）
   stopTimer(sourceId: string) {
-    const timer = this.timers.get(sourceId);
-    if (timer) {
-      clearInterval(timer);
-      this.timers.delete(sourceId);
+    // 前端定时器已废弃，这里保留接口兼容性
+    logService.log('info', 'system', `停止定时器请求: ${sourceId}（由后端管理）`);
+  }
+
+  // 停止所有定时器（现在委托给后端）
+  async stopAllTimers() {
+    try {
+      const response = await axios.post(`${this.apiBaseUrl}/rss/auto-refresh`, {
+        enabled: false
+      });
+      
+      if (response.data.success) {
+        logService.log('info', 'system', '已禁用后端自动刷新');
+      }
+    } catch (error) {
+      logService.log('error', 'system', '禁用后端自动刷新失败', {
+        error: error instanceof Error ? error.message : '未知错误'
+      });
     }
   }
 
-  stopAllTimers() {
-    this.timers.forEach(timer => clearInterval(timer));
-    this.timers.clear();
+  // 更新定时器（现在委托给后端）
+  async updateTimer(sourceId: string, intervalMinutes: number) {
+    await this.startTimer(sourceId, intervalMinutes);
   }
 
-  updateTimer(sourceId: string, intervalMinutes: number) {
-    const { autoRefreshEnabled } = useStore.getState();
-    if (autoRefreshEnabled) {
-      this.startTimer(sourceId, intervalMinutes);
-    }
-  }
-
-  toggleAutoRefresh(enabled: boolean) {
-    const { setAutoRefreshEnabled } = useStore.getState();
-    setAutoRefreshEnabled(enabled);
-    
-    logService.log('info', 'system', `自动刷新${enabled ? '已启用' : '已禁用'}`);
-    
-    if (enabled) {
-      this.startAllTimers();
-    } else {
-      this.stopAllTimers();
+  // 切换自动刷新（现在委托给后端）
+  async toggleAutoRefresh(enabled: boolean) {
+    try {
+      const response = await axios.post(`${this.apiBaseUrl}/rss/auto-refresh`, {
+        enabled
+      });
+      
+      if (response.data.success) {
+        const { setAutoRefreshEnabled } = useStore.getState();
+        setAutoRefreshEnabled(enabled);
+        
+        logService.log('info', 'system', `自动刷新${enabled ? '已启用' : '已禁用'}`);
+        toast.success(`自动刷新${enabled ? '已启用' : '已禁用'}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      logService.log('error', 'system', '切换自动刷新失败', { error: errorMessage });
+      toast.error(`切换自动刷新失败: ${errorMessage}`);
     }
   }
 
@@ -196,13 +245,14 @@ class AutoRefreshManager {
       logService.log('info', 'system', `开始手动刷新RSS源: ${source.name}`);
       updateRSSSource(sourceId, { status: 'active' });
       
-      // 添加超时保护的RSS获取
-      const feedPromise = rssService.fetchRSSFeed(source.url);
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('RSS获取超时')), 30000);
-      });
+      // 调用后端API进行刷新
+      const response = await axios.post(`${this.apiBaseUrl}/rss/refresh/${sourceId}`);
       
-      const feed = await Promise.race([feedPromise, timeoutPromise]);
+      if (!response.data.success) {
+        throw new Error(response.data.error || '后端刷新失败');
+      }
+      
+      const feed = response.data.data;
       const newShows = await rssService.extractTVShows(feed, source.name);
       
       // 检查是否有新的剧名（完全没有统计过的）
@@ -272,46 +322,36 @@ class AutoRefreshManager {
     
     logService.log('info', 'system', `开始手动刷新所有RSS源，共 ${rssSources.length} 个源`);
     
-    let successCount = 0;
-    let failCount = 0;
-    
-    for (const source of rssSources) {
-      try {
-        // 为每个源添加超时保护
-        const refreshPromise = this.manualRefreshSource(source.id);
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`RSS源 ${source.name} 刷新超时`)), 45000);
+    try {
+      // 调用后端API批量刷新
+      const response = await axios.post(`${this.apiBaseUrl}/rss/refresh-all`);
+      
+      if (response.data.success) {
+        const results = response.data.data;
+        const successCount = results.filter((r: any) => r.success).length;
+        const failCount = results.filter((r: any) => !r.success).length;
+        
+        logService.log('info', 'system', `手动刷新所有RSS源完成`, {
+          total: results.length,
+          success: successCount,
+          failed: failCount
         });
         
-        const success = await Promise.race([refreshPromise, timeoutPromise]);
-        if (success) {
-          successCount++;
+        if (failCount > 0) {
+          toast.error(`刷新完成，${successCount} 个成功，${failCount} 个失败`);
         } else {
-          failCount++;
+          toast.success(`所有RSS源刷新完成，共 ${successCount} 个`);
         }
-      } catch (error) {
-        failCount++;
-        const errorMessage = error instanceof Error ? error.message : '未知错误';
-        logService.log('error', 'system', `手动刷新RSS源异常: ${source.name}`, {
-          source: source.name,
-          sourceId: source.id,
-          error: errorMessage
-        });
-        // 确保即使单个源失败也不会阻塞整个流程
-        console.warn(`RSS源 ${source.name} 刷新失败: ${errorMessage}`);
+        
+        // 同步后端状态到前端
+        await this.syncWithBackend();
+      } else {
+        throw new Error(response.data.error || '批量刷新失败');
       }
-    }
-    
-    logService.log('info', 'system', `手动刷新所有RSS源完成`, {
-      total: rssSources.length,
-      success: successCount,
-      failed: failCount
-    });
-    
-    if (failCount > 0) {
-      toast.error(`刷新完成，${successCount} 个成功，${failCount} 个失败`);
-    } else {
-      toast.success(`所有RSS源刷新完成，共 ${successCount} 个`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      logService.log('error', 'system', '批量刷新RSS源失败', { error: errorMessage });
+      toast.error(`批量刷新失败: ${errorMessage}`);
     }
   }
 
