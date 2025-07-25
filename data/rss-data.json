@@ -1,0 +1,14 @@
+{
+  "rssSources": [
+    {
+      "id": "1753425021523j0a7j",
+      "name": "测试RSS源",
+      "url": "https://example.com/rss.xml",
+      "updateInterval": 30,
+      "status": "active",
+      "lastUpdate": "2025-07-25T06:30:21.523Z"
+    }
+  ],
+  "autoRefreshEnabled": true,
+  "lastSaved": "2025-07-25T06:30:21.523Z"
+}

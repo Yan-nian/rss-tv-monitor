@@ -30,16 +30,45 @@ class AutoRefreshManager {
   // 与后端同步RSS源和自动刷新状态
   async syncWithBackend() {
     try {
+      const { rssSources, setRSSSources, autoRefreshEnabled, setAutoRefreshEnabled } = useStore.getState();
+      
       // 获取后端的RSS源列表
       const sourcesResponse = await axios.get(`${this.apiBaseUrl}/rss/sources`);
       if (sourcesResponse.data.success) {
         const backendSources = sourcesResponse.data.data;
-        const { rssSources, setRSSSources } = useStore.getState();
         
-        // 如果后端有数据且与前端不同，则同步到前端
-        if (backendSources.length > 0 && JSON.stringify(backendSources) !== JSON.stringify(rssSources)) {
+        // 双向同步逻辑
+        if (backendSources.length === 0 && rssSources.length > 0) {
+          // 后端没有数据，前端有数据 -> 将前端数据推送到后端
+          logService.log('info', 'system', `检测到后端无RSS源数据，开始推送前端数据，共 ${rssSources.length} 个源`);
+          
+          for (const source of rssSources) {
+            try {
+              const response = await axios.post(`${this.apiBaseUrl}/rss/sources`, {
+                name: source.name,
+                url: source.url,
+                updateInterval: source.updateInterval
+              });
+              
+              if (response.data.success) {
+                logService.log('info', 'system', `已推送RSS源到后端: ${source.name}`);
+              }
+            } catch (error) {
+              logService.log('error', 'system', `推送RSS源失败: ${source.name}`, {
+                error: error instanceof Error ? error.message : '未知错误'
+              });
+            }
+          }
+          
+          // 推送完成后，启动后端自动刷新
+          if (autoRefreshEnabled) {
+            await this.startAllTimers();
+          }
+          
+        } else if (backendSources.length > 0 && JSON.stringify(backendSources) !== JSON.stringify(rssSources)) {
+          // 后端有数据且与前端不同 -> 同步后端数据到前端
           setRSSSources(backendSources);
-          logService.log('info', 'system', `已同步后端RSS源数据，共 ${backendSources.length} 个源`);
+          logService.log('info', 'system', `已同步后端RSS源数据到前端，共 ${backendSources.length} 个源`);
         }
       }
       
@@ -47,11 +76,13 @@ class AutoRefreshManager {
       const refreshResponse = await axios.get(`${this.apiBaseUrl}/rss/auto-refresh`);
       if (refreshResponse.data.success) {
         const backendStatus = refreshResponse.data.data;
-        const { autoRefreshEnabled, setAutoRefreshEnabled } = useStore.getState();
         
         if (backendStatus.enabled !== autoRefreshEnabled) {
-          setAutoRefreshEnabled(backendStatus.enabled);
-          logService.log('info', 'system', `已同步后端自动刷新状态: ${backendStatus.enabled}`);
+          // 如果状态不一致，优先使用前端状态并推送到后端
+          await axios.post(`${this.apiBaseUrl}/rss/auto-refresh`, {
+            enabled: autoRefreshEnabled
+          });
+          logService.log('info', 'system', `已将前端自动刷新状态推送到后端: ${autoRefreshEnabled}`);
         }
       }
     } catch (error) {
